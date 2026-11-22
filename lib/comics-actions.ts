@@ -1,10 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import {
+  characters,
   comicSources,
   learningObjectives,
   stories,
   scenarioDrafts,
+  type CharacterRow,
   type ComicSource,
   type LearningObjectiveRow,
   type ScenarioDraftRow,
@@ -12,7 +14,12 @@ import {
 } from "./schema";
 import { generateComicSlug } from "./slug-generator";
 import { truncateSource } from "./didactic/source";
-import type { ComicStatus, Objective, ScenarioDraft } from "./didactic/types";
+import type {
+  CastMember,
+  ComicStatus,
+  Objective,
+  ScenarioDraft,
+} from "./didactic/types";
 
 async function uniqueSlug(): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -133,6 +140,84 @@ export async function getObjectives(
     .from(learningObjectives)
     .where(eq(learningObjectives.storyId, storyId))
     .orderBy(learningObjectives.position);
+}
+
+export async function getChosenScenario(
+  storyId: string,
+): Promise<ScenarioDraftRow | null> {
+  const drafts = await getScenarioDrafts(storyId);
+  return drafts.find((draft) => draft.status === "chosen") ?? null;
+}
+
+export async function replaceCharacters(
+  storyId: string,
+  cast: CastMember[],
+): Promise<CharacterRow[]> {
+  await db.delete(characters).where(eq(characters.storyId, storyId));
+  if (cast.length === 0) return [];
+
+  return db
+    .insert(characters)
+    .values(
+      cast.map((member, index) => ({
+        storyId,
+        position: index,
+        name: member.name,
+        role: member.role,
+        appearance: member.appearance,
+        portraitPrompt: member.portraitPrompt,
+        status: "pending" as const,
+      })),
+    )
+    .returning();
+}
+
+export async function getCharacters(storyId: string): Promise<CharacterRow[]> {
+  return db
+    .select()
+    .from(characters)
+    .where(eq(characters.storyId, storyId))
+    .orderBy(characters.position);
+}
+
+export async function getCharacterById(id: string): Promise<CharacterRow | null> {
+  const rows = await db
+    .select()
+    .from(characters)
+    .where(eq(characters.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function saveCharacterPortrait(
+  id: string,
+  url: string,
+): Promise<void> {
+  await db
+    .update(characters)
+    .set({ portraitUrl: url, status: "done" })
+    .where(eq(characters.id, id));
+}
+
+export async function updateCharacterFields(
+  storyId: string,
+  updates: Array<{ position: number; name?: string; appearance?: string }>,
+): Promise<void> {
+  for (const update of updates) {
+    const rows = await db
+      .select()
+      .from(characters)
+      .where(eq(characters.storyId, storyId));
+    const target = rows.find((row) => row.position === update.position);
+    if (!target) continue;
+    await db
+      .update(characters)
+      .set({
+        name: update.name ?? target.name,
+        appearance: update.appearance ?? target.appearance,
+      })
+      .where(eq(characters.id, target.id));
+  }
 }
 
 export async function setSelectedObjectives(
