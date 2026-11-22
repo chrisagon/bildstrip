@@ -4,13 +4,13 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 import { createComicRequestSchema, parseJsonBody } from "@/lib/input-limits";
 import { createComicDraft } from "@/lib/comics-actions";
 import { assertUsableText, extractSourceText } from "@/lib/didactic/extract";
+import { getS3Config } from "@/lib/s3-upload";
 
 // Only our own bucket may be fetched server-side: the URL comes from the client.
 function isOwnBucketUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
-    const bucket = process.env.S3_UPLOAD_BUCKET;
-    const region = process.env.S3_UPLOAD_REGION ?? "us-east-1";
+    const { bucket, region } = getS3Config();
     return Boolean(bucket) && url.hostname === `${bucket}.s3.${region}.amazonaws.com`;
   } catch {
     return false;
