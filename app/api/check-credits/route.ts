@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { freeTierRateLimit } from "@/lib/rate-limit";
+import { getBalance } from "@/lib/credits";
+import { FREE_WEEKLY_CREDITS } from "@/lib/didactic/quote";
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,13 +25,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // For free tier, check rate limit status via Redis
-    const limitResult = await freeTierRateLimit.getRemaining(userId);
+    // Credits replace the old "comics per week" counter: one credit per panel.
+    const credits = await getBalance(userId);
 
     return NextResponse.json({
       hasApiKey: false,
-      creditsRemaining: limitResult.remaining,
-      resetTime: limitResult.reset,
+      credits,
+      creditsRemaining: credits,
+      freeWeeklyCredits: FREE_WEEKLY_CREDITS,
+      resetTime: null,
     });
   } catch (error) {
     console.error("Error in check-credits API:", error);

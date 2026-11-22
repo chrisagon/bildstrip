@@ -5,14 +5,13 @@ import { useRouter } from "next/navigation";
 import { Upload, X, Check, ArrowRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { useS3Upload } from "next-s3-upload";
 import { useAuth, SignInButton, useClerk } from "@clerk/nextjs";
 import { COMIC_STYLES } from "@/lib/constants";
 import { useKeyboardShortcut } from "@/hooks/use-keyboard-shortcut";
 import { useApiKey } from "@/hooks/use-api-key";
 import { isContentPolicyViolation } from "@/lib/utils";
 import { ApiKeyModal } from "@/components/api-key-modal";
-import { MAX_SYSTEM_LENGTH, MAX_USER_PROMPT } from "@/lib/prompt";
+import { MAX_USER_PROMPT } from "@/lib/prompt";
 
 interface ComicCreationFormProps {
   prompt: string;
@@ -41,7 +40,6 @@ export function ComicCreationForm({
   const router = useRouter();
   const [loadingStep, setLoadingStep] = useState(0);
   const { toast } = useToast();
-  const { uploadToS3 } = useS3Upload();
   const { isSignedIn, isLoaded } = useAuth();
   const { openSignIn } = useClerk();
   const [apiKey, setApiKey] = useApiKey();
@@ -240,30 +238,22 @@ export function ComicCreationForm({
         }
       }
 
-      const characterUploads = await Promise.all(
-        characterFiles.map((file) => uploadToS3(file).then(({ url }) => url))
-      );
-
-      // Use API to create story and generate first page
-      const response = await fetch("/api/generate-comic", {
+      // The wizard now owns the pipeline: a demo brief only creates the draft.
+      const response = await fetch("/api/comics", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt,
-          ...(apiKey && { apiKey }),
-          style,
-          characterImages: characterUploads,
+          kind: "demo",
+          topic: prompt,
+          audience: "grand public",
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        if (response.status === 429 && errorData.isRateLimited) {
-          throw new Error(errorData.error);
-        }
-        throw new Error(errorData.error || "Failed to create story");
+        throw new Error(errorData.error || "Impossible de créer la bande dessinée");
       }
 
       const result = await response.json();
@@ -271,8 +261,7 @@ export function ComicCreationForm({
       // Clear the draft since submission was successful
       localStorage.removeItem(PROMPT_STORAGE_KEY);
       clearInterval(stepInterval);
-      // Redirect to the story editor using slug
-      router.push(`/story/${result.storySlug}`);
+      router.push(`/create/${result.slug}`);
     } catch (error) {
       console.error("Error creating comic:", error);
       const errorMessage =

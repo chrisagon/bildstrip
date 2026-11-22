@@ -29,6 +29,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Story not found" }, { status: 404 });
     }
 
+    // Legacy route: a comic is readable only by its owner (sharing goes through
+    // /api/comics/[slug]/pdf, which honours the share token).
+    if (result.story.userId !== userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
     const { story, pages } = result;
 
     const images = pages
