@@ -246,6 +246,41 @@ export async function markPagesStaleFromDb(
   }
 }
 
+export async function getPanelById(id: string): Promise<PanelRow | null> {
+  const rows = await db.select().from(panels).where(eq(panels.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function savePanelImage(
+  panelId: string,
+  url: string,
+): Promise<void> {
+  await db
+    .update(panels)
+    .set({ imageUrl: url, status: "done", updatedAt: new Date() })
+    .where(eq(panels.id, panelId));
+}
+
+export async function markPanelFailed(
+  panelId: string,
+  message: string,
+): Promise<void> {
+  await db
+    .update(panels)
+    .set({ status: "failed", lastError: message.slice(0, 500), updatedAt: new Date() })
+    .where(eq(panels.id, panelId));
+}
+
+export async function setPageStatus(
+  pageId: string,
+  status: "pending" | "scripted" | "generating" | "done" | "failed" | "stale",
+): Promise<void> {
+  await db
+    .update(pages)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(pages.id, pageId));
+}
+
 export async function setPageSynopsis(
   pageId: string,
   synopsis: string,
