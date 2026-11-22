@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { HeadBucketCommand, S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { AssumeRoleWithWebIdentityCommand, STSClient } from "@aws-sdk/client-sts";
 import {
   bucketFromResourceArn,
@@ -120,5 +120,19 @@ export async function uploadImageToS3(imageUrl: string, key: string): Promise<st
   } catch (error) {
     console.error("Error uploading to S3:", error);
     throw new Error("Failed to upload image to S3");
+  }
+}
+
+/** Diagnostic only: proves the resolved identity can see the bucket. */
+export async function probeS3Access(): Promise<{ ok: boolean; error?: string }> {
+  const config = getS3Config();
+  try {
+    await s3Client(config).send(new HeadBucketCommand({ Bucket: config.bucket }));
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: (error instanceof Error ? error.message : "unknown error").slice(0, 200),
+    };
   }
 }
