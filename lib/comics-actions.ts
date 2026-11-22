@@ -1,14 +1,18 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { db } from "./db";
 import {
   characters,
   comicSources,
   learningObjectives,
+  pages,
+  panels,
   stories,
   scenarioDrafts,
   type CharacterRow,
   type ComicSource,
   type LearningObjectiveRow,
+  type Page,
+  type PanelRow,
   type ScenarioDraftRow,
   type Story,
 } from "./schema";
@@ -18,6 +22,7 @@ import type {
   CastMember,
   ComicStatus,
   Objective,
+  PanelDraft,
   ScenarioDraft,
 } from "./didactic/types";
 
@@ -140,6 +145,115 @@ export async function getObjectives(
     .from(learningObjectives)
     .where(eq(learningObjectives.storyId, storyId))
     .orderBy(learningObjectives.position);
+}
+
+export async function createPagesForStory(
+  storyId: string,
+  count: number,
+): Promise<Page[]> {
+  await db.delete(pages).where(eq(pages.storyId, storyId));
+  if (count <= 0) return [];
+
+  return db
+    .insert(pages)
+    .values(
+      Array.from({ length: count }, (_, index) => ({
+        storyId,
+        pageNumber: index + 1,
+        prompt: "",
+        characterImageUrls: [],
+        status: "pending" as const,
+      })),
+    )
+    .returning();
+}
+
+export async function getPagesForStory(storyId: string): Promise<Page[]> {
+  return db
+    .select()
+    .from(pages)
+    .where(eq(pages.storyId, storyId))
+    .orderBy(pages.pageNumber);
+}
+
+export async function getPageByNumber(
+  storyId: string,
+  pageNumber: number,
+): Promise<Page | null> {
+  const rows = await db
+    .select()
+    .from(pages)
+    .where(and(eq(pages.storyId, storyId), eq(pages.pageNumber, pageNumber)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function replacePanels(
+  pageId: string,
+  script: { synopsis: string; panels: PanelDraft[] },
+): Promise<PanelRow[]> {
+  await db.delete(panels).where(eq(panels.pageId, pageId));
+
+  if (script.panels.length === 0) return [];
+
+  return db
+    .insert(panels)
+    .values(
+      script.panels.map((panel, index) => ({
+        pageId,
+        position: index + 1,
+        intent: panel.intent,
+        visualPrompt: panel.visualPrompt,
+        caption: panel.caption,
+        dialogue: panel.dialogue,
+        characterIndexes: panel.characterIndexes,
+        status: "pending" as const,
+      })),
+    )
+    .returning();
+}
+
+export async function getPageById(pageId: string): Promise<Page | null> {
+  const rows = await db.select().from(pages).where(eq(pages.id, pageId)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getPanelsByPage(pageId: string): Promise<PanelRow[]> {
+  return db
+    .select()
+    .from(panels)
+    .where(eq(panels.pageId, pageId))
+    .orderBy(panels.position);
+}
+
+export async function markPagesStaleFromDb(
+  storyId: string,
+  pageNumber: number,
+): Promise<void> {
+  const affected = await db
+    .select({ id: pages.id })
+    .from(pages)
+    .where(and(eq(pages.storyId, storyId), gte(pages.pageNumber, pageNumber)));
+
+  if (affected.length === 0) return;
+
+  for (const page of affected) {
+    await db.update(pages).set({ status: "stale" }).where(eq(pages.id, page.id));
+    await db
+      .update(panels)
+      .set({ status: "stale" })
+      .where(eq(panels.pageId, page.id));
+  }
+}
+
+export async function setPageSynopsis(
+  pageId: string,
+  synopsis: string,
+): Promise<void> {
+  await db
+    .update(pages)
+    .set({ synopsis, status: "scripted", updatedAt: new Date() })
+    .where(eq(pages.id, pageId));
 }
 
 export async function getChosenScenario(

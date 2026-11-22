@@ -37,6 +37,11 @@ export const pages = pgTable('pages', {
   prompt: text('prompt').notNull(),
   characterImageUrls: jsonb('character_image_urls').$type<string[]>().default([]).notNull(),
   generatedImageUrl: text('generated_image_url'),
+  status: text('status')
+    .$type<'pending' | 'scripted' | 'generating' | 'done' | 'failed' | 'stale'>()
+    .default('pending')
+    .notNull(),
+  synopsis: text('synopsis'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
