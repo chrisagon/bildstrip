@@ -1,8 +1,16 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db";
-import { comicSources, stories, type ComicSource, type Story } from "./schema";
+import {
+  comicSources,
+  learningObjectives,
+  stories,
+  type ComicSource,
+  type LearningObjectiveRow,
+  type Story,
+} from "./schema";
 import { generateComicSlug } from "./slug-generator";
 import { truncateSource } from "./didactic/source";
+import type { ComicStatus, Objective } from "./didactic/types";
 
 async function uniqueSlug(): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -78,6 +86,51 @@ export async function getSourceByStoryId(
     .where(eq(comicSources.storyId, storyId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function setComicStatus(
+  storyId: string,
+  status: ComicStatus,
+): Promise<void> {
+  await db
+    .update(stories)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(stories.id, storyId));
+}
+
+/** Replaces the whole objective list; a re-run must not leave stale notions. */
+export async function replaceObjectives(
+  storyId: string,
+  objectives: Objective[],
+): Promise<LearningObjectiveRow[]> {
+  await db
+    .delete(learningObjectives)
+    .where(eq(learningObjectives.storyId, storyId));
+
+  if (objectives.length === 0) return [];
+
+  return db
+    .insert(learningObjectives)
+    .values(
+      objectives.map((objective, index) => ({
+        storyId,
+        position: index,
+        title: objective.title,
+        summary: objective.summary,
+        sourceQuote: objective.sourceQuote,
+      })),
+    )
+    .returning();
+}
+
+export async function getObjectives(
+  storyId: string,
+): Promise<LearningObjectiveRow[]> {
+  return db
+    .select()
+    .from(learningObjectives)
+    .where(eq(learningObjectives.storyId, storyId))
+    .orderBy(learningObjectives.position);
 }
 
 export async function updateSourceText(
