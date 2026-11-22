@@ -6,7 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { COMIC_STYLES } from "@/lib/constants";
 import { ComicPage } from "@/components/comic/comic-page";
-import { canAdvance, type WizardStep } from "@/lib/didactic/wizard-rules";
+import { canAdvance, stepFromStatus, type WizardStep } from "@/lib/didactic/wizard-rules";
+import { quoteCredits } from "@/lib/didactic/quote";
 
 type Objective = { id: string; position: number; title: string; summary: string };
 type Scenario = { id: string; title: string; synopsis: string; templateId: string };
@@ -44,6 +45,8 @@ export function WizardClient() {
   const [step, setStep] = useState<WizardStep>("source");
   const [busy, setBusy] = useState(false);
   const [source, setSource] = useState("");
+  const [isDemo, setIsDemo] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -69,16 +72,17 @@ export function WizardClient() {
     setPanels(data.panels ?? []);
     setProgress(data.progress ?? { done: 0, total: 0 });
     if (data.characters?.length) setCharacters(data.characters);
-    if (data.story?.status === "script_ready") setStep("storyboard");
-    if (data.story?.status === "generating" || data.story?.status === "done") {
-      setStep("generate");
-    }
+    setStep((current) => (current === "source" ? stepFromStatus(data.story?.status ?? "draft") : current));
   }, [request, slug]);
 
   useEffect(() => {
     loadComic().catch(() => {});
     request(`/api/comics/${slug}/source`)
-      .then((data) => setSource(data.text ?? ""))
+      .then((data) => {
+        setSource(data.text ?? "");
+        setIsDemo(data.kind === "demo");
+        setTruncated(Boolean(data.truncated));
+      })
       .catch(() => {});
   }, [loadComic, request, slug]);
 
@@ -92,6 +96,11 @@ export function WizardClient() {
   async function extractObjectives() {
     setBusy(true);
     try {
+      // The route reads the stored text: pasting then extracting must save first.
+      await request(`/api/comics/${slug}/source`, {
+        method: "PATCH",
+        body: JSON.stringify({ text: source }),
+      });
       const data = await request(`/api/comics/${slug}/context`, { method: "POST" });
       setObjectives(data.objectives ?? []);
       setSelected((data.objectives ?? []).map((o: Objective) => o.position).slice(0, 1));
@@ -171,12 +180,14 @@ export function WizardClient() {
   }
 
   useEffect(() => {
-    if (step !== "generate" && step !== "cast") return;
+    if (step !== "generate" && step !== "cast" && step !== "storyboard") return;
     const timer = setInterval(() => {
       loadComic().catch(() => {});
     }, 2000);
     return () => clearInterval(timer);
   }, [step, loadComic]);
+
+  const pagesCount = new Set(panels.map((panel) => panel.pageNumber)).size;
 
   const portraitsReady =
     characters.length >= 2 &&
@@ -206,6 +217,17 @@ export function WizardClient() {
             Vérifiez le texte extrait. Un support mal lu donne une bande dessinée
             fausse : corrigez-le ici avant de continuer.
           </p>
+          {isDemo && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+              Contenu généré par l&apos;IA à partir de votre sujet : il ne provient pas
+              d&apos;un document fourni. Relisez les notions avant de générer.
+            </p>
+          )}
+          {truncated && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+              Document tronqué : seuls les 30 000 premiers caractères sont utilisés.
+            </p>
+          )}
           <textarea
             className="min-h-[240px] w-full rounded-lg border border-border bg-background p-3 font-mono text-xs"
             value={source}
@@ -392,6 +414,11 @@ export function WizardClient() {
               </li>
             ))}
           </ol>
+          <p className="text-sm">
+            Coût : {quoteCredits(pagesCount, characters.length)} crédits (
+            {pagesCount} planches × 5 + {characters.length} portraits), débités
+            uniquement au lancement.
+          </p>
           <Button disabled={busy || panels.length === 0} onClick={startGeneration}>
             Générer les planches
           </Button>
@@ -415,7 +442,7 @@ export function WizardClient() {
                   .map((panel) => ({
                     id: panel.id,
                     position: panel.position,
-                    imageUrl: panel.imageUrl,
+                    imageUrl: panel.status === "done" ? panel.imageUrl : null,
                     caption: panel.caption,
                     dialogue: panel.dialogue,
                   }))}

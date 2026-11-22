@@ -20,7 +20,9 @@ export async function GET(
   const token = request.nextUrl.searchParams.get("t");
   const isOwner = Boolean(userId) && story.userId === userId;
   const canRead =
-    isOwner || (story.visibility === "unlisted" && token === story.shareToken);
+    isOwner || (story.visibility === "unlisted" &&
+      Boolean(story.shareToken) &&
+      token === story.shareToken);
   if (!canRead) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }

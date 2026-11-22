@@ -21,8 +21,19 @@ export async function publishJob(
 ): Promise<void> {
   const token = process.env.QSTASH_TOKEN;
   if (!token) {
-    if (process.env.INLINE_GENERATION === "1") return;
-    throw new Error("QSTASH_TOKEN is not configured");
+    if (process.env.INLINE_GENERATION !== "1") {
+      throw new Error("QSTASH_TOKEN is not configured");
+    }
+    // Local mode: call the worker on this machine instead of the queue.
+    const response = await fetch(`${appUrl()}/api/internal/${queue}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(`Worker ${queue} failed with ${response.status}`);
+    }
+    return;
   }
 
   const client = new Client({ token });

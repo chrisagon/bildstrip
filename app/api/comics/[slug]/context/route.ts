@@ -65,10 +65,10 @@ export async function POST(
       );
     }
 
-    await replaceObjectives(story.id, objectives);
+    const rows = await replaceObjectives(story.id, objectives);
     await setComicStatus(story.id, "context_ready");
 
-    return NextResponse.json({ objectives });
+    return NextResponse.json({ objectives: rows });
   } catch (error) {
     console.error("Error extracting objectives:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

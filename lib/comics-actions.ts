@@ -1,4 +1,4 @@
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   characters,
@@ -100,6 +100,37 @@ export async function getSourceByStoryId(
     .where(eq(comicSources.storyId, storyId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+/** Atomic single-flight: only one caller can move the comic out of these states. */
+export async function claimComicStatus(
+  storyId: string,
+  fromStatuses: ComicStatus[],
+  toStatus: ComicStatus,
+): Promise<boolean> {
+  const rows = await db
+    .update(stories)
+    .set({ status: toStatus, updatedAt: new Date() })
+    .where(and(eq(stories.id, storyId), inArray(stories.status, fromStatuses)))
+    .returning({ id: stories.id });
+  return rows.length > 0;
+}
+
+/** Atomically takes a panel for rendering, so a replayed message cannot double-render. */
+export async function claimPanel(panelId: string): Promise<boolean> {
+  const rows = await db
+    .update(panels)
+    .set({ status: "generating", updatedAt: new Date() })
+    .where(and(eq(panels.id, panelId), inArray(panels.status, ["pending", "failed"])))
+    .returning({ id: panels.id });
+
+  if (rows.length > 0) {
+    await db
+      .update(panels)
+      .set({ attempts: sql`${panels.attempts} + 1` })
+      .where(eq(panels.id, panelId));
+  }
+  return rows.length > 0;
 }
 
 export async function setComicStatus(

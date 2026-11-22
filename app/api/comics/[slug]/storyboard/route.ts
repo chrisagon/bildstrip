@@ -90,7 +90,14 @@ export async function POST(
       );
     }
 
-    const objectives = await getObjectives(story.id);
+    const existing = await getPagesForStory(story.id);
+    if (existing.length > 0 && story.status !== "failed") {
+      return NextResponse.json({ pages: existing, pageCount: existing.length });
+    }
+
+    const all = await getObjectives(story.id);
+    const selected = all.filter((objective) => objective.selected);
+    const objectives = selected.length > 0 ? selected : all;
     const pageCount = estimatePages(objectives.length);
     const created = await createPagesForStory(story.id, pageCount);
 

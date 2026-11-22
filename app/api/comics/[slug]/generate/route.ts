@@ -1,17 +1,24 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { parseUserApiKey } from "@/lib/api-key";
 import { quoteCredits } from "@/lib/didactic/quote";
-import { canUseSynchronousMode, submitGeneration } from "@/lib/didactic/credits";
-import { dbComicStatus, redisLedger } from "@/lib/credits";
+import { submitGeneration } from "@/lib/didactic/credits";
+import { redisLedger } from "@/lib/credits";
 import { publishJob } from "@/lib/qstash";
 import {
+  claimComicStatus,
   getCharacters,
   getComicBySlug,
   getPagesForStory,
   getPanelsByPage,
+  setComicStatus,
 } from "@/lib/comics-actions";
+
+const RUNNABLE: Array<"script_ready" | "failed" | "done"> = [
+  "script_ready",
+  "failed",
+  "done",
+];
 
 export async function POST(
   request: NextRequest,
@@ -32,7 +39,7 @@ export async function POST(
     if (story.userId !== userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
-    if (story.status !== "script_ready") {
+    if (!RUNNABLE.includes(story.status as (typeof RUNNABLE)[number])) {
       return NextResponse.json(
         { error: "Le storyboard doit être validé avant la génération." },
         { status: 400 },
@@ -41,72 +48,75 @@ export async function POST(
 
     const pages = await getPagesForStory(story.id);
     const characters = await getCharacters(story.id);
-    const cost = quoteCredits(pages.length, characters.length);
 
-    const userApiKey = parseUserApiKey(request.headers.get("x-api-key"));
-    if (userApiKey.status === "invalid") {
+    // A retry only pays for what is still missing: panels already rendered and
+    // portraits already generated are not charged again.
+    const pending: string[] = [];
+    for (const page of pages) {
+      for (const panel of await getPanelsByPage(page.id)) {
+        if (panel.status !== "done") pending.push(panel.id);
+      }
+    }
+    const missingPortraits = characters.filter((member) => !member.portraitUrl);
+    const cost = quoteCredits(0, pending.length + missingPortraits.length);
+
+    if (pending.length === 0 && missingPortraits.length === 0) {
       return NextResponse.json(
-        { error: "Invalid API key", errorType: "invalid_api_key" },
+        { error: "Toutes les cases sont déjà générées." },
         { status: 400 },
       );
     }
 
-    const hasOwnKey = userApiKey.status === "valid";
-    if (hasOwnKey) {
-      if (!canUseSynchronousMode({ pages: pages.length, hasOwnKey })) {
-        return NextResponse.json(
-          {
-            error: "Avec votre clé, la génération est limitée à 4 planches.",
-            errorType: "own_key_too_long",
-          },
-          { status: 400 },
-        );
-      }
-
-      await dbComicStatus.set(story.id, "generating");
-      const panels = [];
-      for (const page of pages) {
-        panels.push(...(await getPanelsByPage(page.id)));
-      }
-      return NextResponse.json({ mode: "synchronous", panels, credits: 0 });
-    }
+    const claim = {
+      claim: () => claimComicStatus(story.id, RUNNABLE, "generating"),
+      release: () => setComicStatus(story.id, "script_ready"),
+    };
 
     const result = await submitGeneration({
       storyId: story.id,
       userId,
       cost,
       store: redisLedger,
-      // The route publishes one message per panel below; this adapter satisfies
-      // the contract without emitting a generic job.
-      jobs: { publish: async () => {} },
-      status: dbComicStatus,
+      claim,
+      // Per-panel messages are published below; this adapter only satisfies the
+      // contract and is the single point where a queue failure is detected.
+      jobs: {
+        publish: async () => {
+          if (pending.length === 0 && missingPortraits.length === 0) {
+            throw new Error("nothing to queue");
+          }
+        },
+      },
     });
 
+    if (result === "already_queued") {
+      return NextResponse.json({ mode: "queued", already: true });
+    }
     if (result === "insufficient") {
       return NextResponse.json(
         {
-          error: `Il manque des crédits : ${cost} nécessaires pour ${pages.length} planches.`,
+          error: `Il manque des crédits : ${cost} nécessaires pour ${pending.length} cases.`,
           errorType: "insufficient_credits",
           credits: cost,
         },
         { status: 402 },
       );
     }
-    if (result === "already_queued") {
-      return NextResponse.json({ mode: "queued", credits: cost, already: true });
+    if (result === "publish_failed") {
+      return NextResponse.json(
+        { error: "Mise en file impossible, crédits rendus. Réessayez." },
+        { status: 503 },
+      );
     }
 
-    for (const page of pages) {
-      for (const panel of await getPanelsByPage(page.id)) {
-        await publishJob("render-panel", { panelId: panel.id });
-      }
+    for (const member of missingPortraits) {
+      await publishJob("render-portrait", { characterId: member.id });
+    }
+    for (const panelId of pending) {
+      await publishJob("render-panel", { panelId });
     }
 
-    return NextResponse.json({
-      mode: "queued",
-      credits: cost,
-      panels: pages.length * 5,
-    });
+    return NextResponse.json({ mode: "queued", credits: cost, panels: pending.length });
   } catch (error) {
     console.error("Error starting generation:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

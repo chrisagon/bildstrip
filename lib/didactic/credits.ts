@@ -14,10 +14,21 @@ export type JobPublisher = {
   publish(queue: string, body: Record<string, unknown>): Promise<void>;
 };
 
-export type ComicStatusStore = {
-  get(storyId: string): Promise<string>;
-  set(storyId: string, status: string): Promise<void>;
+/**
+ * An atomic single-flight guard. `claim` must succeed for exactly one caller
+ * (a conditional UPDATE in the database); `release` puts the comic back to a
+ * runnable state when the run could not start.
+ */
+export type GenerationClaim = {
+  claim(): Promise<boolean>;
+  release(): Promise<void>;
 };
+
+export type SubmitResult =
+  | "queued"
+  | "already_queued"
+  | "insufficient"
+  | "publish_failed";
 
 /** Own-key generation stays synchronous, so it is capped to keep runs short. */
 export function canUseSynchronousMode(input: {
@@ -28,26 +39,35 @@ export function canUseSynchronousMode(input: {
 }
 
 /**
- * Debits up front, then queues. A second call for a comic already generating is
- * deduplicated by the status check, so a double click costs one generation.
+ * Claim, debit, then queue — in that order, so a double submission cannot debit
+ * twice and a failed queue call leaves the balance untouched and the comic
+ * runnable.
  */
 export async function submitGeneration(input: {
   storyId: string;
   userId: string;
   cost: number;
   store: Ledger;
+  claim: GenerationClaim;
   jobs: JobPublisher;
-  status: ComicStatusStore;
-}): Promise<"queued" | "already_queued" | "insufficient"> {
-  const current = await input.status.get(input.storyId);
-  if (current === "generating") return "already_queued";
+}): Promise<SubmitResult> {
+  if (!(await input.claim.claim())) return "already_queued";
 
   const balance = await input.store.balance(input.userId);
-  if (balance < input.cost) return "insufficient";
+  if (balance < input.cost) {
+    await input.claim.release();
+    return "insufficient";
+  }
 
   await input.store.apply(input.userId, -input.cost, "generation", input.storyId);
-  await input.status.set(input.storyId, "generating");
-  await input.jobs.publish("render-panel", { storyId: input.storyId });
+
+  try {
+    await input.jobs.publish("render-panel", { storyId: input.storyId });
+  } catch {
+    await input.store.apply(input.userId, input.cost, "generation_rollback", input.storyId);
+    await input.claim.release();
+    return "publish_failed";
+  }
 
   return "queued";
 }

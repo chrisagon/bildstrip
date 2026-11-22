@@ -15,6 +15,24 @@ export type WizardState = {
   portraitsReady?: boolean;
 };
 
+/** Where a returning user resumes, given the comic's stored status. */
+export function stepFromStatus(status: string): WizardStep {
+  switch (status) {
+    case "context_ready":
+      return "objectives";
+    case "cast_ready":
+      return "cast";
+    case "script_ready":
+    case "failed":
+      return "storyboard";
+    case "generating":
+    case "done":
+      return "generate";
+    default:
+      return "source";
+  }
+}
+
 /** The UI enforces the same order the API enforces server-side. */
 export function canAdvance(state: WizardState): boolean {
   switch (state.step) {

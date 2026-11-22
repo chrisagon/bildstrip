@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       hasApiKey: false,
       credits,
+      creditsRemaining: credits,
       freeWeeklyCredits: FREE_WEEKLY_CREDITS,
       resetTime: null,
     });

@@ -9,9 +9,11 @@ import {
   getPageById,
   getPanelById,
   getPanelsByPage,
+  claimPanel,
   markPanelFailed,
   savePanelImage,
 } from "@/lib/comics-actions";
+import { refundPanels } from "@/lib/credits";
 import { getStoryById } from "@/lib/db-actions";
 
 export async function POST(request: NextRequest) {
@@ -46,6 +48,11 @@ export async function POST(request: NextRequest) {
     const story = await getStoryById(page.storyId);
     if (!story) {
       return NextResponse.json({ error: "Histoire introuvable" }, { status: 404 });
+    }
+
+    // A replayed message must not render (or charge) the same panel twice.
+    if (!(await claimPanel(panelId))) {
+      return NextResponse.json({ skipped: true });
     }
 
     const cast = (await getCharacters(story.id)).map((member) => ({
@@ -95,6 +102,17 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erreur inconnue";
     await markPanelFailed(panelId, message).catch(() => {});
+    // A panel that will never render is refunded, once.
+    const failed = await getPanelById(panelId).catch(() => null);
+    if (failed) {
+      const parentPage = await getPageById(failed.pageId).catch(() => null);
+      const parentStory = parentPage
+        ? await getStoryById(parentPage.storyId).catch(() => null)
+        : null;
+      if (parentStory) {
+        await refundPanels(parentStory.userId, parentStory.id, 1).catch(() => {});
+      }
+    }
     console.error("Error rendering panel:", error);
     return NextResponse.json({ error: "Échec de la case" }, { status: 500 });
   }

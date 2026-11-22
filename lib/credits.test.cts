@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { submitGeneration, canUseSynchronousMode } = require("./didactic/credits.ts");
+const { submitGeneration } = require("./didactic/credits.ts");
 
 function fakeStore(balance: number) {
   const balances = new Map([["u1", balance]]);
@@ -18,72 +18,73 @@ function fakeStore(balance: number) {
   };
 }
 
-function fakeJobs() {
-  const calls: string[] = [];
+function fakeClaim() {
+  let claimed = false;
   return {
-    calls,
-    async publish(queue: string, _body: Record<string, unknown>) {
-      calls.push(queue);
+    async claim() {
+      if (claimed) return false;
+      claimed = true;
+      return true;
+    },
+    async release() {
+      claimed = false;
     },
   };
 }
 
-function fakeStatus() {
-  const statuses = new Map<string, string>();
-  return {
-    async get(storyId: string) {
-      return statuses.get(storyId) ?? "script_ready";
-    },
-    async set(storyId: string, status: string) {
-      statuses.set(storyId, status);
-    },
-  };
-}
-
-test("a double submission only debits once", async () => {
+test("a second submission is refused by the atomic claim, and nothing is debited", async () => {
   const store = fakeStore(20);
-  const jobs = fakeJobs();
-  const status = fakeStatus();
-
-  const first = await submitGeneration({
+  const claim = fakeClaim();
+  const deps = {
     storyId: "s1",
     userId: "u1",
     cost: 17,
     store,
-    jobs,
-    status,
-  });
-  const second = await submitGeneration({
-    storyId: "s1",
-    userId: "u1",
-    cost: 17,
-    store,
-    jobs,
-    status,
-  });
+    claim,
+    jobs: { publish: async () => {} },
+  };
 
-  assert.equal(first, "queued");
-  assert.equal(second, "already_queued");
+  assert.equal(await submitGeneration(deps), "queued");
+  assert.equal(await submitGeneration(deps), "already_queued");
   assert.equal(store.value("u1"), 3);
 });
 
-test("an insufficient balance changes nothing", async () => {
+test("an insufficient balance releases the claim and changes nothing", async () => {
   const store = fakeStore(5);
+  const claim = fakeClaim();
+
   const result = await submitGeneration({
     storyId: "s2",
     userId: "u1",
     cost: 17,
     store,
-    jobs: fakeJobs(),
-    status: fakeStatus(),
+    claim,
+    jobs: { publish: async () => {} },
   });
 
   assert.equal(result, "insufficient");
   assert.equal(store.value("u1"), 5);
+  assert.equal(await claim.claim(), true, "the claim must have been released");
 });
 
-test("own-key mode is capped at four pages", () => {
-  assert.equal(canUseSynchronousMode({ pages: 4, hasOwnKey: true }), true);
-  assert.equal(canUseSynchronousMode({ pages: 5, hasOwnKey: true }), false);
-  assert.equal(canUseSynchronousMode({ pages: 3, hasOwnKey: false }), false);
+test("a publish failure refunds and releases so the comic stays retryable", async () => {
+  const store = fakeStore(20);
+  const claim = fakeClaim();
+
+  const result = await submitGeneration({
+    storyId: "s3",
+    userId: "u1",
+    cost: 17,
+    store,
+    claim,
+    jobs: {
+      publish: async () => {
+        throw new Error("qstash down");
+      },
+    },
+  });
+
+  assert.equal(result, "publish_failed");
+  assert.equal(store.value("u1"), 20);
+  assert.equal(await claim.claim(), true, "the claim must have been released");
 });

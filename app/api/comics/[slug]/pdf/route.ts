@@ -48,7 +48,9 @@ export async function GET(
     const isOwner = Boolean(userId) && story.userId === userId;
     if (
       !isOwner &&
-      !(story.visibility === "unlisted" && token === story.shareToken)
+      !(story.visibility === "unlisted" &&
+      Boolean(story.shareToken) &&
+      token === story.shareToken)
     ) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }

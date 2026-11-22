@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import Together from "together-ai";
 import { generatePageScript } from "@/lib/didactic/storyboard";
-import { verifyQstashRequest } from "@/lib/qstash";
+import { publishJob, verifyQstashRequest } from "@/lib/qstash";
 import {
   getCharacters,
   getChosenScenario,
@@ -37,6 +37,10 @@ export async function POST(request: NextRequest) {
     const page = await getPageById(pageId);
     if (!page) {
       return NextResponse.json({ error: "Planche introuvable" }, { status: 404 });
+    }
+    // A replayed message must not rewrite a page that is already scripted.
+    if (page.status === "scripted") {
+      return NextResponse.json({ pageId: page.id, skipped: true });
     }
 
     const scenario = await getChosenScenario(page.storyId);
@@ -83,7 +87,14 @@ export async function POST(request: NextRequest) {
     await replacePanels(page.id, script);
     await setPageSynopsis(page.id, script.synopsis);
 
+    // Pages are written in order: each one queues the next after its synopsis
+    // exists, otherwise the rolling context would be empty.
     const allPages = await getPagesForStory(page.storyId);
+    const next = allPages.find(
+      (entry) => entry.pageNumber === page.pageNumber + 1 && entry.status === "pending",
+    );
+    if (next) await publishJob("render-script", { pageId: next.id });
+
     const scripted = allPages.filter((entry) => entry.status === "scripted").length;
     if (scripted === allPages.length) {
       await setComicStatus(page.storyId, "script_ready");

@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { createComicRequestSchema, parseJsonBody } from "@/lib/input-limits";
 import { createComicDraft } from "@/lib/comics-actions";
-import { extractSourceText } from "@/lib/didactic/extract";
+import { assertUsableText, extractSourceText } from "@/lib/didactic/extract";
 
 // Only our own bucket may be fetched server-side: the URL comes from the client.
 function isOwnBucketUrl(raw: string): boolean {
@@ -59,6 +59,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (body.kind === "document") {
+      // A scanned PDF extracts to an empty string rather than throwing.
+      assertUsableText(sourceText);
+    }
+
     const story = await createComicDraft({
       userId,
       kind: body.kind,
@@ -72,6 +77,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ slug: story.slug }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Aucun texte exploitable")) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error("Error creating comic draft:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

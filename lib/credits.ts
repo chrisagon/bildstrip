@@ -4,7 +4,7 @@ import { db } from "./db";
 import { creditLedger, stories } from "./schema";
 import { FREE_WEEKLY_CREDITS } from "./didactic/quote";
 import type { ComicStatus } from "./didactic/types";
-import type { ComicStatusStore, Ledger } from "./didactic/credits";
+import type { Ledger } from "./didactic/credits";
 
 export {
   OWN_KEY_MAX_PAGES,
@@ -12,6 +12,11 @@ export {
   submitGeneration,
 } from "./didactic/credits";
 export type { JobPublisher } from "./didactic/credits";
+
+export type ComicStatusStore = {
+  get(storyId: string): Promise<string>;
+  set(storyId: string, status: string): Promise<void>;
+};
 
 const BALANCE_PREFIX = "credits:";
 const BALANCE_TTL_SECONDS = 7 * 24 * 60 * 60;
