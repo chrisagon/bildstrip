@@ -4,13 +4,15 @@ import {
   comicSources,
   learningObjectives,
   stories,
+  scenarioDrafts,
   type ComicSource,
   type LearningObjectiveRow,
+  type ScenarioDraftRow,
   type Story,
 } from "./schema";
 import { generateComicSlug } from "./slug-generator";
 import { truncateSource } from "./didactic/source";
-import type { ComicStatus, Objective } from "./didactic/types";
+import type { ComicStatus, Objective, ScenarioDraft } from "./didactic/types";
 
 async function uniqueSlug(): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -131,6 +133,84 @@ export async function getObjectives(
     .from(learningObjectives)
     .where(eq(learningObjectives.storyId, storyId))
     .orderBy(learningObjectives.position);
+}
+
+export async function setSelectedObjectives(
+  storyId: string,
+  positions: number[],
+): Promise<void> {
+  const keep = new Set(positions);
+  const rows = await getObjectives(storyId);
+  for (const row of rows) {
+    await db
+      .update(learningObjectives)
+      .set({ selected: keep.has(row.position) })
+      .where(eq(learningObjectives.id, row.id));
+  }
+}
+
+export async function replaceScenarioDrafts(
+  storyId: string,
+  drafts: ScenarioDraft[],
+): Promise<ScenarioDraftRow[]> {
+  await db.delete(scenarioDrafts).where(eq(scenarioDrafts.storyId, storyId));
+  if (drafts.length === 0) return [];
+
+  return db
+    .insert(scenarioDrafts)
+    .values(
+      drafts.map((draft) => ({
+        storyId,
+        templateId: draft.templateId,
+        title: draft.title,
+        synopsis: draft.synopsis,
+        beats: draft.beats,
+        estimatedPages: draft.estimatedPages,
+        status: "proposed" as const,
+      })),
+    )
+    .returning();
+}
+
+export async function getScenarioDrafts(
+  storyId: string,
+): Promise<ScenarioDraftRow[]> {
+  return db
+    .select()
+    .from(scenarioDrafts)
+    .where(eq(scenarioDrafts.storyId, storyId))
+    .orderBy(scenarioDrafts.createdAt);
+}
+
+/** Keeps one proposal and drops the others: the choice is exclusive. */
+export async function chooseScenario(
+  storyId: string,
+  draftId: string,
+): Promise<ScenarioDraftRow | null> {
+  const drafts = await getScenarioDrafts(storyId);
+  const chosen = drafts.find((draft) => draft.id === draftId);
+  if (!chosen) return null;
+
+  for (const draft of drafts) {
+    if (draft.id === chosen.id) continue;
+    await db.delete(scenarioDrafts).where(eq(scenarioDrafts.id, draft.id));
+  }
+  await db
+    .update(scenarioDrafts)
+    .set({ status: "chosen" })
+    .where(eq(scenarioDrafts.id, chosen.id));
+
+  return { ...chosen, status: "chosen" };
+}
+
+export async function setStyle(
+  storyId: string,
+  styleId: string,
+): Promise<void> {
+  await db
+    .update(stories)
+    .set({ style: styleId, updatedAt: new Date() })
+    .where(eq(stories.id, storyId));
 }
 
 export async function updateSourceText(

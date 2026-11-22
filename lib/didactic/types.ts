@@ -54,6 +54,14 @@ export type ScenarioTemplate = {
   beats: string[];
 };
 
+export type ScenarioDraft = {
+  templateId: string;
+  title: string;
+  synopsis: string;
+  beats: string[];
+  estimatedPages: number;
+};
+
 export const PANEL_STATUSES = [
   "pending",
   "generating",
