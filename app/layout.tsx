@@ -51,7 +51,13 @@ export default function RootLayout({
         <head>
           <PlausibleProvider
             src="https://plausible.io/js/script.js"
-            scriptProps={{ "data-domain": "makecomics.io" }}
+            scriptProps={
+              // next-plausible v4 a retiré `domain`/`data-domain` de ses types,
+              // alors que Plausible lit toujours cet attribut sur la balise.
+              {
+                "data-domain": "makecomics.io",
+              } as React.ScriptHTMLAttributes<HTMLScriptElement>
+            }
           />
         </head>
         <body className="font-sans antialiased">
