@@ -1,10 +1,27 @@
 import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import "../envConfig.ts";
+import { requireDatabaseUrl } from "./db-config";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is not set");
+export { requireDatabaseUrl };
+
+let instance: NeonHttpDatabase | null = null;
+
+function connect(): NeonHttpDatabase {
+  instance ??= drizzle(neon(requireDatabaseUrl()));
+  return instance;
 }
 
-const sql = neon(process.env.DATABASE_URL);
-export const db = drizzle(sql);
+/**
+ * Lazily connected handle. Importing this module never touches the database or
+ * requires its configuration; the first query does. Next evaluates route
+ * modules while collecting build configuration, so an import-time throw here
+ * breaks `next build` on any deployment without DATABASE_URL.
+ */
+export const db: NeonHttpDatabase = new Proxy({} as NeonHttpDatabase, {
+  get(_target, property) {
+    const client = connect();
+    const value = Reflect.get(client, property, client);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
